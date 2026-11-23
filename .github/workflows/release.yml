@@ -37,7 +37,7 @@ jobs:
       - run: cp target/x86_64-unknown-linux-musl/release/encrok encrok
       - uses: docker/build-push-action@v6
         with: { context: ., load: true, tags: "ghcr.io/danielmattertum/encrok:latest" }
-      - run: docker save encrok:local | gzip > encrok-oci.tar.gz
+      - run:  docker save ghcr.io/danielmattertum/encrok:latest | gzip > encrok-oci.tar.gz
       - uses: softprops/action-gh-release@v2
         with:
           files: encrok-oci.tar.gz
