@@ -27,6 +27,12 @@ jobs:
       - run: rustup target add x86_64-unknown-linux-musl
       - run: cargo build --release --target x86_64-unknown-linux-musl
       - run: cp target/x86_64-unknown-linux-musl/release/encrok encrok
+      - uses: docker/build-push-action@v6
+        with: { context: ., load: true, tags: "encrok:local" }
+      - run: docker save encrok:local | gzip > encrok-oci.tar.gz
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: encrok-oci.tar.gz
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
