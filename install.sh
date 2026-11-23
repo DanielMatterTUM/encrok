@@ -9,7 +9,7 @@
 #   --version V         pin a version (default: latest)
 #   --base-url URL      asset base (default https://encrok.deploy.zeugs.online)
 #   --client/--proxy    mode for the generated service config
-#   --server/--key/--local-port/--mapping/--host/--listen/--ws-listen
+#   --server/--key/--local-port/--mapping/--host/--listen/--ws-listen/--tls-insecure
 #                       written into the service config file
 #   --config FILE       use this existing YAML config for the service instead of generating one
 #   --service           install + enable a systemd unit (system unit as root, user unit otherwise)
@@ -22,6 +22,7 @@ SERVICE=0
 GEN=0
 CONFIG=""
 MODE=""
+TLS_INSEC=0
 SERVER=""
 KEY=""
 LISTEN=""
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
     --local-port) LOCAL_PORT="$2"; shift 2;;
     --mapping) MAPPINGS="$MAPPINGS $2"; shift 2;;
     --host) HOSTNAME_="$2"; shift 2;;
+    --tls-insecure) TLS_INSEC=1; shift;;
     --config) CONFIG="$2"; shift 2;;
     *) echo "encrok install: unbekannte Option: $1" >&2; exit 2;;
   esac
@@ -120,6 +122,7 @@ if [ "$GEN" = 1 ]; then
       echo "server: \"$SERVER\""
       echo "key: \"$KEY\""
       [ -n "$HOSTNAME_" ] && echo "host: $HOSTNAME_"
+      [ "$TLS_INSEC" = 1 ] && echo "tls_insecure: true"
       [ -n "$LOCAL_PORT" ] && echo "local_port: $LOCAL_PORT"
       if [ -n "$MAPPINGS" ]; then
         echo "mappings:"

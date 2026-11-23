@@ -122,6 +122,7 @@ struct FileConfig {
     local_port: Option<u16>,
     mappings: Option<Vec<MappingYaml>>,
     host: Option<String>,
+    tls_insecure: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +171,7 @@ struct Args {
     keys: Vec<String>,
     mappings: Vec<Mapping>,
     host: Option<String>,
+    tls_insecure: bool,
 }
 
 const HELP: &str = "\
@@ -192,6 +194,7 @@ Options:
   --local-port <port>     B: catch-all mapping of every request path to this port
   --mapping <prefix:port> B: path-prefix -> port mapping (repeatable, longest prefix wins,
                           path is forwarded to the backend unchanged)
+  --tls-insecure          B: TLS-Zertifikate nicht prüfen (Gateways ohne volle Kette)
   --host <name>           B: host label this tunnel answers for (default: first label
                           of --server). Only used when the proxy serves several tunnels.
   -h, --help              this help
@@ -216,6 +219,7 @@ fn parse_args() -> Result<Args, String> {
     let mut keys: Vec<String> = Vec::new();
     let mut mappings: Vec<Mapping> = Vec::new();
     let mut host: Option<String> = None;
+    let mut tls_insecure = false;
     let mut config_file: Option<String> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -248,6 +252,7 @@ fn parse_args() -> Result<Args, String> {
                 mappings.push(Mapping::parse(&s)?);
             }
             "--host" => host = Some(need_val("--host", &mut i)?),
+            "--tls-insecure" => tls_insecure = true,
             "-h" | "--help" | "help" => {
                 print!("{HELP}");
                 std::process::exit(0);
@@ -322,6 +327,7 @@ fn parse_args() -> Result<Args, String> {
         if host.is_none() {
             host = cfg.host;
         }
+        tls_insecure |= cfg.tls_insecure.unwrap_or(false);
     }
 
     let mode = mode
@@ -373,6 +379,7 @@ fn parse_args() -> Result<Args, String> {
         keys,
         mappings,
         host,
+        tls_insecure,
     })
 }
 
@@ -894,6 +901,43 @@ async fn client_main(args: &Args) -> AResult {
     }
 }
 
+#[derive(Debug)]
+struct NoVerifier;
+impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end: &rustls::pki_types::CertificateDer<'_>,
+        _ints: &[rustls::pki_types::CertificateDer<'_>],
+        _name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _msg: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _msg: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        use rustls::SignatureScheme::*;
+        vec![RSA_PKCS1_SHA256, RSA_PKCS1_SHA384, RSA_PKCS1_SHA512,
+             ECDSA_NISTP256_SHA256, ECDSA_NISTP384_SHA384, ECDSA_NISTP521_SHA512,
+             ED25519, ED448, RSA_PSS_SHA256, RSA_PSS_SHA384, RSA_PSS_SHA512]
+    }
+}
+
 async fn client_once(args: &Args) -> AResult {
     let cfg = ws_cfg();
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -907,7 +951,27 @@ async fn client_once(args: &Args) -> AResult {
         header::AUTHORIZATION,
         HeaderValue::from_str(&args.keys[0]).map_err(|e| e.to_string())?,
     );
-    let (ws, _resp) = connect_async_with_config(hs, Some(cfg), true).await?;
+    let (ws, _resp) = if args.tls_insecure {
+        use std::sync::Arc;
+        use tokio_tungstenite::Connector;
+        let cc = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_no_client_auth();
+        tokio_tungstenite::connect_async_tls_with_config(
+            hs,
+            Some(cfg),
+            true,
+            Some(Connector::Rustls(Arc::new(cc))),
+        )
+        .await?
+    } else {
+        connect_async_with_config(hs, Some(cfg), true).await?
+    };
     eprintln!("encrok client: verbunden mit {}", args.server);
 
     let (mut sink, mut stream) = ws.split();

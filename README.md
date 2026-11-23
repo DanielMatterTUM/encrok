@@ -23,6 +23,8 @@ encrok --client --server wss://TAG.deploy.zeugs.online/_endpoint --key <secret> 
   leitet Requests per Longest-Prefix-Match an lokale TCP-Ports weiter
   (`--local-port` = Catch-all). Der Pfad wird unverändert weitergereicht.
 * Config-Datei (YAML) + Flags (Flags gewinnen), `--help` zeigt alles.
+* `--tls-insecure` (B): TLS-Gegenprüfung aus — nötig, wenn das Gateway kein
+  Intermediate-Cert liefert (aktuell `*.deploy.zeugs.online`).
 
 ## Installieren
 
