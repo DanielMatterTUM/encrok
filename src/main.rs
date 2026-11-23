@@ -955,7 +955,7 @@ async fn client_once(args: &Args) -> AResult {
         use std::sync::Arc;
         use tokio_tungstenite::Connector;
         let cc = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
+            rustls::crypto::aws_lc_rs::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?
