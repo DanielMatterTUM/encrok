@@ -6,7 +6,8 @@ on:
 jobs:
   binary:
     runs-on: ubuntu-latest
-    permissions: { contents: write }
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - run: rustup target add x86_64-unknown-linux-musl
@@ -36,5 +37,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ lower(github.repository) }}:latest
-            ghcr.io/${{ lower(github.repository) }}:${{ github.ref_name }}
+            ghcr.io/danielmattertum/encrok:latest
+            ghcr.io/danielmattertum/encrok:${{ github.ref_name }}
