@@ -193,8 +193,8 @@ Options:
   --key     <secret>      pre-shared Authorization key (repeatable on --proxy)
   --local-port <port>     B: catch-all mapping of every request path to this port
   --mapping <prefix:port> B: path-prefix -> port mapping (repeatable, first match wins;
-                          the matched prefix is stripped before forwarding to the port,
-                          path is forwarded to the backend unchanged)
+                          path is forwarded to the backend unchanged — the app must know
+                          its public base path, e.g. BASE_PATH=/coding)
   --tls-insecure          B: TLS-Zertifikate nicht prüfen (Gateways ohne volle Kette)
   --host <name>           B: host label this tunnel answers for (default: first label
                           of --server). Only used when the proxy serves several tunnels.
@@ -1019,15 +1019,15 @@ async fn client_once(args: &Args) -> AResult {
                 let (tx, rx) = mpsc::unbounded_channel();
                 relays.insert(id, tx.clone());
                 let out = out_tx.clone();
-                let mapping = args
+                let port = args
                     .mappings
                     .iter()
                     .find(|m| {
                         !m.prefix.is_empty() && head_matches_prefix(&m.prefix, &payload)
                     })
-                    .or_else(|| args.mappings.iter().find(|m| m.prefix.is_empty()));
-                let mapping = mapping.map(|m| (m.prefix.clone(), m.port));
-                tokio::spawn(relay(id, rx, out, mapping));
+                    .or_else(|| args.mappings.iter().find(|m| m.prefix.is_empty()))
+                    .map(|m| m.port);
+                tokio::spawn(relay(id, rx, out, port));
                 tx
             }
         };
@@ -1051,52 +1051,17 @@ fn head_matches_prefix(prefix: &str, payload: &[u8]) -> bool {
         })
 }
 
-/// Rewrite the request line of the first frame: remove a matched path prefix,
-/// so the local server sees paths relative to its mount point ("/coding/x" -> "/x").
-fn strip_uri_prefix(payload: &[u8], prefix: &str) -> Vec<u8> {
-    let Some(nl) = payload.iter().position(|&c| c == b'\n') else {
-        return payload.to_vec();
-    };
-    let line = &payload[..nl];
-    let mut parts = line.splitn(3, |&c| c == b' ');
-    let (Some(method), Some(uri), Some(ver)) = (parts.next(), parts.next(), parts.next()) else {
-        return payload.to_vec();
-    };
-    let keep: Vec<u8> = match uri.strip_prefix(prefix.as_bytes()) {
-        Some(tail) if tail.is_empty() => b"/".to_vec(),
-        Some(tail) if tail[0] == b'?' => {
-            let mut v = b"/".to_vec();
-            v.extend_from_slice(tail);
-            v
-        }
-        Some(tail) if tail[0] == b'/' => tail.to_vec(),
-        _ => return payload.to_vec(), // not a real prefix boundary: leave untouched
-    };
-    let keep = keep.as_slice();
-    let mut out = Vec::with_capacity(payload.len());
-    out.extend_from_slice(method);
-    out.push(b' ');
-    out.extend_from_slice(keep);
-    out.push(b' ');
-    out.extend_from_slice(ver.strip_suffix(&[b'\r'][..]).unwrap_or(ver));
-    out.extend_from_slice(&payload[nl..]);
-    out
-}
-
 /// One request stream: pump tunnel <-> local TCP port.
 async fn relay(
     id: u32,
     mut rx: mpsc::UnboundedReceiver<Evt>,
     out: mpsc::UnboundedSender<Message>,
-    mapping: Option<(String, u16)>,
+    port: Option<u16>,
 ) {
-    let (mut strip_prefix, port) = match mapping {
-        Some((p, port)) => (if p.is_empty() { None } else { Some(p) }, port),
-        None => {
-            let body = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            let _ = out.send(Message::binary(frame(id, FIN, body)));
-            return;
-        }
+    let Some(port) = port else {
+        let body = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let _ = out.send(Message::binary(frame(id, FIN, body)));
+        return;
     };
     let tcp = match tokio::time::timeout(
         Duration::from_secs(10),
@@ -1124,10 +1089,7 @@ async fn relay(
             biased;
             evt = rx.recv(), if !remote_done => {
                 match evt {
-                    Some(Evt::Data(mut bytes, fin)) => {
-                        if let Some(prefix) = strip_prefix.take() {
-                            bytes = Bytes::from(strip_uri_prefix(&bytes, &prefix));
-                        }
+                    Some(Evt::Data(bytes, fin)) => {
                         if !bytes.is_empty() && write_half.write_all(&bytes).await.is_err() {
                             break;
                         }
