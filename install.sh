@@ -65,7 +65,8 @@ DEST="$PREFIX/encrok"
 
 DL=""
 if [ "$VERSION" = "latest" ]; then
-  DL="$BASE_URL/$ASSET"
+  # GitHub-Releases haben eine saubere TLS-Kette (deploy-Gateway liefert nur das Leaf)
+  DL="https://github.com/DanielMatterTUM/encrok/releases/latest/download/$ASSET"
 else
   DL="https://github.com/DanielMatterTUM/encrok/releases/download/v$VERSION/$ASSET"
 fi
